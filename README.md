@@ -22,6 +22,27 @@ Self-Driving Car Engineer Nanodegree Program
 
 ##### Using Finite State Machine to make a decision.
 
+
+### Simplified pseudocode for finite state machine
+
+```
+#keep lane if not too close
+lane = previous_lane;
+#check distance between ego car and front car
+#if the distance is within 30m
+if(too_close);
+	#slow down a litle bit
+	vel -=  2.24
+	#consider lane change
+	#check safe to change lane
+	if(safe);
+		lane = changed_lane
+#try to keep maximum speed
+ifelse(vel < 50)
+	vel += 2.24
+```
+
+
 ### Simulator.
 You can download the Term3 Simulator which contains the Path Planning Project from the [releases tab (https://github.com/udacity/self-driving-car-sim/releases).
 
