@@ -4,43 +4,75 @@ Self-Driving Car Engineer Nanodegree Program
 [image1]: ./examples/path_pic.png
 [image2]: ./examples/spline.png
 [image3]: ./examples/fsm.png
+[image4]: ./examples/prediction.png
+[image5]: ./examples/fsm2.png
+[image6]: ./examples/tra.png
 
-### Generating path
+## Path planning is composed of 3 parts: 
 
-![alt text][image2]
+### 1, Prediction
 
-###### First, picking up four points and applying spline interpolation.
+![alt text][image4]
 
-![alt text][image1]
+Predicting other vehicles' motion. 
 
-###### Second, picking up N points from the generate path.
+Since we are dealing with highway situation in this project, 
+I assume constant vehicle motion model.
 
+The prediction is made {0.05, 0.1, 0.15}second later. 
+
+
+### 2, Behavioral planning
+
+![alt text][image5]
+
+Decision making is done by Finite State Machine.
+
+It starts from Lane Keep. 
+
+If ego vehicle is close enough to front car, then start preparing for lane change.
+
+If it is safe to go to another lane, then Change Lane.
+
+### 3, Trajectory generation
+
+![alt text][image6]
+
+Trajectory is made by spline interpolation.
+
+The difficulty comes from how to treat jerk paramators.
+
+I wrote codes for accelerating gently so that an ego car would not violate jerk.
+
+```
+//relative speed in terms of ego vehicle
+double target_speed = (car_speed - closest_velocity)/2.24; //(m/s)
+//time to get to destined place
+double arrival_time =  (closest_distance - buffer)/abs(target_speed);
+int time_points = abs(arrival_time)/.02;
+
+//Linear interpolate ego velocity to front car's velocity so that accerelate gently
+double ideal_vel;
+double adding_vel;
+if(target_speed > 0)
+{
+  ideal_vel = target_speed*2.24/time_points;
+  adding_vel = min(.224, ideal_vel);
+  ref_vel -= adding_vel;
+  cout << "-: "<< adding_vel <<endl;
+}
+else
+{
+  ideal_vel = abs(target_speed)*2.24/time_points;
+  adding_vel = min(.224, ideal_vel);
+  ref_vel += adding_vel;
+  cout << "+: "<<adding_vel <<endl;
+}
+
+```
    
-### Decision making
-
-![alt text][image3]
-
-##### Using Finite State Machine to make a decision.
 
 
-### Simplified pseudocode for finite state machine
-
-```
-#keep lane if not too close
-lane = previous_lane;
-#check distance between ego car and front car
-#if the distance is within 30m
-if(too_close);
-	#slow down a litle bit
-	vel -=  2.24
-	#consider lane change
-	#check safe to change lane
-	if(safe);
-		lane = changed_lane
-#try to keep maximum speed
-ifelse(vel < 50)
-	vel += 2.24
-```
 
 
 ### Simulator.

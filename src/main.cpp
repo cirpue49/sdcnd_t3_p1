@@ -13,6 +13,16 @@
 
 using namespace std;
 
+struct one_vehicle_struct {
+  int    id;
+  double x;
+  double y;
+  double s;
+  double v;
+  int laneNumber;
+};
+
+
 // for convenience
 using json = nlohmann::json;
 
@@ -161,9 +171,6 @@ vector<double> getXY(double s, double d, vector<double> maps_s, vector<double> m
 
 }
 
-//double s_at_t(float s, float t){
-//  return
-//}
 
 vector<vector<double>> generate_predictions(vector<vector<double>> sensor_fusion){
   vector<vector<double>> predictions_for_agents;
@@ -176,7 +183,7 @@ vector<vector<double>> generate_predictions(vector<vector<double>> sensor_fusion
 
 //    vector<double> horizon = {0.5, 1.0, 1.5};
 
-    vector<double> horizon = {0.1, 0.2, 0.3};
+    vector<double> horizon = {0.05, 0.1, 0.15};
 
     vector<double> agent_s;
     for (int j = 0; j < horizon.size(); j ++)
@@ -211,7 +218,7 @@ bool safe_lane_changing(double ego_s , vector<vector<double>>predictions){
   {
     for(int j = 0; j < predictions[0].size(); j++)
     {
-      if((ego_s - 7.5) < predictions[i][j] && predictions[i][j] < (ego_s + 10) ) { safe = false;}
+      if((ego_s - 10) < predictions[i][j] && predictions[i][j] < (ego_s + 30) ) { safe = false;}
     }
   }
 
@@ -263,6 +270,8 @@ int main() {
 	//reference velocity
 	double ref_vel = 0.0;//mph
 
+
+
   h.onMessage([&lane, &ref_vel, &map_waypoints_x,&map_waypoints_y,&map_waypoints_s,&map_waypoints_dx,&map_waypoints_dy]
 									(uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length, uWS::OpCode opCode) {
     // "42" at the start of the message means there's a websocket message event.
@@ -291,7 +300,7 @@ int main() {
           	double car_s = j[1]["s"];
           	double car_d = j[1]["d"];
           	double car_yaw = j[1]["yaw"];
-          	double car_speed = j[1]["speed"];
+          	double car_speed = j[1]["speed"];//mph
 
           	// Previous path data given to the Planner
           	auto previous_path_x = j[1]["previous_path_x"];
@@ -305,69 +314,108 @@ int main() {
 
 						int prev_size = previous_path_x.size();
 
-						if(prev_size > 0){
-							car_s = end_path_s;
-						}
 						bool too_close = false;
-						//check if the other cars are in my lane
-            //size of sensor fusion: 12
+            int closest_vehicle_ind;
+            double closest_distance = 9999999;
+            double closest_velocity;
+            bool in_front = false;
+            double buffer = 20.0;
+            double lane_change_buffer = 30.0;
+            double tracking_distance = 40.0;
+
 						for (int i = 0; i < sensor_fusion.size(); i++){
 							float d = sensor_fusion[i][6];
 							if( d < (2+4*lane+2) && d > 2+4*lane-2){
 								double vx = sensor_fusion[i][3];
 								double vy = sensor_fusion[i][4];
-								double check_speed = sqrt(vx*vx+vy*vy);
+								double check_speed = sqrt(vx*vx+vy*vy);//mph
 								double check_car_s = sensor_fusion[i][5];
 
-								//looking into a little bit future
-								check_car_s += ((double)prev_size*.02*check_speed);
-								if((check_car_s > car_s)&&((check_car_s - car_s) < 30))
+                //same lane & target car is in front of ego car
+                if(check_car_s > car_s)
 								{
-									too_close = true;
-                  //prediction for other agents
-                  //assuming constant velocity, no lane change
-                  vector<int> possible_lanes;
-                  vector<bool> safe_vec;
-                  if (lane != 1){possible_lanes = {1};}
-                  else{possible_lanes = {0, 2};}
-                  for (int i = 0; i < possible_lanes.size(); i++)
-                  {
-                    //filter sensor fusion based on lane
-                    vector<vector<double>> filtered_sensor_fusion = filter_sensor_fusion(sensor_fusion, possible_lanes[i]);
-                    //keep it forward horizon = 3
-                    vector<vector<double>> predictions = generate_predictions(filtered_sensor_fusion);
-                    //check if safe to go
-                    bool safe = safe_lane_changing(car_s ,predictions);
-                    safe_vec.push_back(safe);
-                  }
 
-                  if(safe_vec.size() == 1 && safe_vec[0] == true){lane = possible_lanes[0];}
-                  else if(safe_vec.size() ==2)
+                  if((check_car_s - car_s) < closest_distance)
                   {
-                    if (safe_vec[0]==true && safe_vec[1] == true)
-                    {
-                      int randomIndex = rand() % 2;
-                      lane = possible_lanes[randomIndex];
-                    }
-                    else if(safe_vec[0] == true && safe_vec[1] == false){lane = possible_lanes[0];}
-                    else if(safe_vec[0] == false && safe_vec[1] == true){lane = possible_lanes[1];}
-                    //else: false & false: keep lane
+                    in_front = true;
+                    closest_vehicle_ind = i;
+                    closest_distance = check_car_s - car_s;
+                    closest_velocity = check_speed*2.24;
                   }
-                  //else: keep lane
 								}
 							}
 						}
 
+            if(!in_front && (ref_vel < 49.5))
+            {
+              ref_vel += .224;
+            }
+            else if(in_front && (ref_vel < 49.5) && closest_distance > tracking_distance)
+            {
+              ref_vel += .224;
+            }
+            else if (in_front && (closest_distance < tracking_distance))
+            {
+                //at least keeping 'buffer' distance
+                //relative speed from ego vehicle
+                double target_speed = (car_speed - closest_velocity)/2.24; //(m/s)
+                double arrival_time =  (closest_distance - buffer)/abs(target_speed);
+                int time_points = abs(arrival_time)/.02;
 
+                double ideal_vel;
+                double adding_vel;
+                if(target_speed > 0)
+                {
+                  ideal_vel = target_speed*2.24/time_points;
+                  adding_vel = min(.224, ideal_vel);
+                  ref_vel -= adding_vel;
+                  cout << "-: "<< adding_vel <<endl;
+                }
+                else
+                {
+                  ideal_vel = abs(target_speed)*2.24/time_points;
+                  adding_vel = min(.224, ideal_vel);
+                  ref_vel += adding_vel;
+                  cout << "+: "<<adding_vel <<endl;
+                }
+                cout << "ref_vel: " << ref_vel << endl;
+                cout<< "car speed: " << car_speed << endl;
+                cout<< "closest speed: " << closest_velocity << endl;
+            }
+            if(in_front  && (closest_distance < lane_change_buffer))
+            {
+              //start changing lane if it is safe
+              vector<int> possible_lanes;
+              vector<bool> safe_vec;
+              if (lane != 1){possible_lanes = {1};}
+              else{possible_lanes = {0, 2};}
+              for (int i = 0; i < possible_lanes.size(); i++)
+              {
+                //filter sensor fusion based on lane
+                vector<vector<double>> filtered_sensor_fusion = filter_sensor_fusion(sensor_fusion, possible_lanes[i]);
+                //keep it forward horizon = 3
+                vector<vector<double>> predictions = generate_predictions(filtered_sensor_fusion);
+                //check if safe to go
+                bool safe = safe_lane_changing(car_s ,predictions);
+                safe_vec.push_back(safe);
+              }
 
-						if(too_close)
-						{
-							ref_vel -= .224;
-						}
-						else if(ref_vel < 49.5)
-						{
-							ref_vel += .224;
-						}
+              if(safe_vec.size() == 1 && safe_vec[0] == true){lane = possible_lanes[0];}
+              else if(safe_vec.size() ==2)
+              {
+                if (safe_vec[0]==true && safe_vec[1] == true)
+                {
+                  int randomIndex = rand() % 2;
+                  lane = possible_lanes[randomIndex];
+                }
+                else if(safe_vec[0] == true){lane = possible_lanes[0];}
+                else if(safe_vec[1] == true){lane = possible_lanes[1];}
+                //else: false & false: keep lane
+              }
+              //else: keep lane
+            }
+            cout << "closest: " << closest_distance << endl;
+            cout<< "---------------" <<endl;
 
 
 						vector<double> ptsx;
@@ -407,6 +455,9 @@ int main() {
 
 						}
 
+          if(prev_size > 0){
+							car_s = end_path_s;
+						}
 
 						vector<double> next_wp0 = getXY(car_s+30, (2+4*lane), map_waypoints_s, map_waypoints_x, map_waypoints_y);
 						vector<double> next_wp1 = getXY(car_s+60, (2+4*lane), map_waypoints_s, map_waypoints_x, map_waypoints_y);
@@ -445,14 +496,14 @@ int main() {
 							next_y_vals.push_back(previous_path_y[i]);
 						}
 
-						double target_x = 30.0;
+						double target_x = 30.0;//m
 						double target_y = s(target_x);
 						double target_dist = sqrt((target_x*target_x)+ (target_y*target_y));
 						double x_add_on = 0;
 
 
 						for(int i = 0; i <= 50 - previous_path_x.size(); i++){
-							double N = (target_dist/(.02*ref_vel/2.24));
+							double N = (target_dist/(.02*ref_vel/2.24)); //2.24mph = 1.00 m/s
 							double x_point = x_add_on+(target_x)/N;
 							double y_point = s(x_point);
 
